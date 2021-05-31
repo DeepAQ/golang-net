@@ -89,6 +89,9 @@ type Transport struct {
 	// plain-text "http" scheme. Note that this does not enable h2c support.
 	AllowHTTP bool
 
+	// MaxFrameSize optionally specifies the largest size of frame to send.
+	MaxFrameSize uint32
+
 	// MaxHeaderListSize is the http2 SETTINGS_MAX_HEADER_LIST_SIZE to
 	// send in the initial settings frame. It is how many bytes
 	// of response headers are allowed. Unlike the http2 spec, zero here
@@ -922,6 +925,9 @@ const maxAllocFrameSize = 512 << 10
 func (cc *ClientConn) frameScratchBuffer() []byte {
 	cc.mu.Lock()
 	size := cc.maxFrameSize
+	if cc.t.MaxFrameSize > 0 && size > cc.t.MaxFrameSize {
+		size = cc.t.MaxFrameSize
+	}
 	if size > maxAllocFrameSize {
 		size = maxAllocFrameSize
 	}
