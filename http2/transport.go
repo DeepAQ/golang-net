@@ -918,47 +918,6 @@ func (cc *ClientConn) closeForLostPing() error {
 
 const maxAllocFrameSize = 512 << 10
 
-// frameBuffer returns a scratch buffer suitable for writing DATA frames.
-// They're capped at the min of the peer's max frame size or 512KB
-// (kinda arbitrarily), but definitely capped so we don't allocate 4GB
-// bufers.
-func (cc *ClientConn) frameScratchBuffer() []byte {
-	cc.mu.Lock()
-	size := cc.maxFrameSize
-	if cc.t.MaxFrameSize > 0 && size > cc.t.MaxFrameSize {
-		size = cc.t.MaxFrameSize
-	}
-	if size > maxAllocFrameSize {
-		size = maxAllocFrameSize
-	}
-	for i, buf := range cc.freeBuf {
-		if len(buf) >= int(size) {
-			cc.freeBuf[i] = nil
-			cc.mu.Unlock()
-			return buf[:size]
-		}
-	}
-	cc.mu.Unlock()
-	return make([]byte, size)
-}
-
-func (cc *ClientConn) putFrameScratchBuffer(buf []byte) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	const maxBufs = 4 // arbitrary; 4 concurrent requests per conn? investigate.
-	if len(cc.freeBuf) < maxBufs {
-		cc.freeBuf = append(cc.freeBuf, buf)
-		return
-	}
-	for i, old := range cc.freeBuf {
-		if old == nil {
-			cc.freeBuf[i] = buf
-			return
-		}
-	}
-	// forget about it.
-}
-
 // errRequestCanceled is a copy of net/http's errRequestCanceled because it's not
 // exported. At least they'll be DeepEqual for h1-vs-h2 comparisons tests.
 var errRequestCanceled = errors.New("net/http: request canceled")
@@ -1304,8 +1263,6 @@ var (
 func (cs *clientStream) writeRequestBody(body io.Reader, bodyCloser io.Closer) (err error) {
 	cc := cs.cc
 	sentEnd := false // whether we sent the final DATA frame w/ END_STREAM
-	buf := cc.frameScratchBuffer()
-	defer cc.putFrameScratchBuffer(buf)
 
 	defer func() {
 		traceWroteRequest(cs.trace, err)
@@ -1323,6 +1280,19 @@ func (cs *clientStream) writeRequestBody(body io.Reader, bodyCloser io.Closer) (
 	hasTrailers := req.Trailer != nil
 	remainLen := actualContentLength(req)
 	hasContentLen := remainLen != -1
+
+	bufSize := cc.maxFrameSize
+	if remainLen >= 0 && bufSize > uint32(remainLen)+2 {
+		bufSize = uint32(remainLen) + 2
+	}
+	if cc.t.MaxFrameSize > 0 {
+		if bufSize > cc.t.MaxFrameSize {
+			bufSize = cc.t.MaxFrameSize
+		}
+	} else if bufSize > maxAllocFrameSize {
+		bufSize = maxAllocFrameSize
+	}
+	buf := make([]byte, bufSize)
 
 	var sawEOF bool
 	for !sawEOF {
