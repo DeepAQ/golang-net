@@ -124,6 +124,12 @@ type Transport struct {
 	// Defaults to 15s.
 	PingTimeout time.Duration
 
+	// IdleConnTimeout is the maximum amount of time an idle
+	// (keep-alive) connection will remain idle before closing
+	// itself.
+	// Zero means no limit.
+	IdleConnTimeout time.Duration
+
 	// t1, if non-nil, is the standard library Transport using
 	// this transport. Its settings are used (but not its
 	// RoundTrip method, etc).
@@ -2676,7 +2682,9 @@ func (rt noDialH2RoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 func (t *Transport) idleConnTimeout() time.Duration {
-	if t.t1 != nil {
+	if t.IdleConnTimeout > 0 {
+		return t.IdleConnTimeout
+	} else if t.t1 != nil {
 		return t.t1.IdleConnTimeout
 	}
 	return 0
