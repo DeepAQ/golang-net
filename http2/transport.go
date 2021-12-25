@@ -1563,7 +1563,7 @@ func (cs *clientStream) writeRequestBody(req *http.Request) (err error) {
 	var buf []byte
 	if bp, ok := bufPool.Get().(*[]byte); ok && len(*bp) >= scratchLen {
 		defer bufPool.Put(bp)
-		buf = (*bp)[:scratchLen]
+		buf = *bp
 	} else {
 		buf = make([]byte, scratchLen)
 		defer bufPool.Put(&buf)
@@ -1571,7 +1571,7 @@ func (cs *clientStream) writeRequestBody(req *http.Request) (err error) {
 
 	var sawEOF bool
 	for !sawEOF {
-		n, err := body.Read(buf)
+		n, err := body.Read(buf[:len(buf)])
 		if hasContentLen {
 			remainLen -= int64(n)
 			if remainLen == 0 && err == nil {
