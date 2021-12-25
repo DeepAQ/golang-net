@@ -1185,12 +1185,34 @@ func TestServer_Ping(t *testing.T) {
 	}
 }
 
+type filterListener struct {
+	net.Listener
+	accept func(conn net.Conn) (net.Conn, error)
+}
+
+func (l *filterListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return l.accept(c)
+}
+
 func TestServer_MaxQueuedControlFrames(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
 
-	st := newServerTester(t, nil)
+	st := newServerTester(t, nil, func(ts *httptest.Server) {
+		// TCP buffer sizes on test systems aren't under our control and can be large.
+		// Create a conn that blocks after 10000 bytes written.
+		ts.Listener = &filterListener{
+			Listener: ts.Listener,
+			accept: func(conn net.Conn) (net.Conn, error) {
+				return newBlockingWriteConn(conn, 10000), nil
+			},
+		}
+	})
 	defer st.Close()
 	st.greet()
 
@@ -2569,6 +2591,10 @@ func TestServer_Rejects_TLS11(t *testing.T) { testRejectTLS(t, tls.VersionTLS11)
 
 func testRejectTLS(t *testing.T, max uint16) {
 	st := newServerTester(t, nil, func(c *tls.Config) {
+		// As of 1.18 the default minimum Go TLS version is
+		// 1.2. In order to test rejection of lower versions,
+		// manually set the minimum version to 1.0
+		c.MinVersion = tls.VersionTLS10
 		c.MaxVersion = max
 	})
 	defer st.Close()
